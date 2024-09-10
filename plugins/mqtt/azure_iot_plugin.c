@@ -67,11 +67,11 @@ static int azure_parse_config(neu_plugin_t *plugin, const char *setting,
                               mqtt_config_t *config)
 {
     int         ret              = 0;
-    char *      err_param        = NULL;
+    char       *err_param        = NULL;
     const char *placeholder      = "********";
-    char *      write_req_topic  = NULL;
-    char *      write_resp_topic = NULL;
-    char *      username         = NULL;
+    char       *write_req_topic  = NULL;
+    char       *write_resp_topic = NULL;
+    char       *username         = NULL;
 
     neu_json_elem_t version = {
         .name      = "version",
@@ -82,6 +82,7 @@ static int azure_parse_config(neu_plugin_t *plugin, const char *setting,
     neu_json_elem_t client_id = { .name = "device-id", .t = NEU_JSON_STR };
     neu_json_elem_t qos       = { .name = "qos", .t = NEU_JSON_INT };
     neu_json_elem_t format    = { .name = "format", .t = NEU_JSON_INT };
+    neu_json_elem_t compress  = { .name = "compress", .t = NEU_JSON_INT };
     neu_json_elem_t host      = { .name = "host", .t = NEU_JSON_STR };
     neu_json_elem_t auth      = { .name = "auth", .t = NEU_JSON_INT };
     neu_json_elem_t password  = { .name = "sas", .t = NEU_JSON_STR };
@@ -94,8 +95,8 @@ static int azure_parse_config(neu_plugin_t *plugin, const char *setting,
         return -1;
     }
 
-    ret = neu_parse_param(setting, &err_param, 5, &client_id, &qos, &format,
-                          &host, &auth);
+    ret = neu_parse_param(setting, &err_param, 6, &client_id, &qos, &format,
+                          &host, &auth, &compress);
     if (0 != ret) {
         plog_error(plugin, "parsing setting fail, key: `%s`", err_param);
         goto error;
@@ -126,6 +127,21 @@ static int azure_parse_config(neu_plugin_t *plugin, const char *setting,
         MQTT_UPLOAD_FORMAT_TAGS != format.v.val_int) {
         plog_error(plugin, "setting invalid format: %" PRIi64,
                    format.v.val_int);
+        goto error;
+    }
+
+    // compress, required
+    if (MQTT_COMPRESS_NONE != compress.v.val_int &&
+        MQTT_COMPRESS_GZIP != compress.v.val_int &&
+        MQTT_COMPRESS_ZLIB != compress.v.val_int &&
+        MQTT_COMPRESS_LZ4 != compress.v.val_int &&
+        MQTT_COMPRESS_ZSTD != compress.v.val_int &&
+        MQTT_COMPRESS_SNAPPY != compress.v.val_int &&
+        MQTT_COMPRESS_BZIP2 != compress.v.val_int &&
+        MQTT_COMPRESS_LZMA != compress.v.val_int &&
+        MQTT_COMPRESS_BROTLI != compress.v.val_int) {
+        plog_error(plugin, "setting invalid compress: %" PRIi64,
+                   compress.v.val_int);
         goto error;
     }
 
@@ -183,6 +199,7 @@ static int azure_parse_config(neu_plugin_t *plugin, const char *setting,
     config->client_id           = client_id.v.val_str;
     config->qos                 = qos.v.val_int;
     config->format              = format.v.val_int;
+    config->compress            = compress.v.val_int;
     config->write_req_topic     = write_req_topic;
     config->write_resp_topic    = write_resp_topic;
     config->cache               = false;
@@ -203,6 +220,8 @@ static int azure_parse_config(neu_plugin_t *plugin, const char *setting,
     plog_notice(plugin, "config qos             : %d", config->qos);
     plog_notice(plugin, "config format          : %s",
                 mqtt_upload_format_str(config->format));
+    plog_notice(plugin, "config compress        : %s",
+                mqtt_compress_str(config->compress));
     plog_notice(plugin, "config write-req-topic : %s", config->write_req_topic);
     plog_notice(plugin, "config write-resp-topic: %s",
                 config->write_resp_topic);
@@ -295,7 +314,7 @@ static neu_plugin_t *azure_plugin_open(void)
     return plugin;
 }
 
-static int azure_handle_trans_data(neu_plugin_t *            plugin,
+static int azure_handle_trans_data(neu_plugin_t             *plugin,
                                    neu_reqresp_trans_data_t *trans_data)
 {
     int rv = 0;
@@ -317,10 +336,27 @@ static int azure_handle_trans_data(neu_plugin_t *            plugin,
         return NEU_ERR_EINTERNAL;
     }
 
-    char *         topic = plugin->upload_topic;
+    char  *data_to_send = json_str;
+    size_t data_len     = strlen(json_str);
+
+    if (plugin->config.compress != MQTT_COMPRESS_NONE) {
+        size_t compressed_len;
+        char  *compressed_data = compress_data_generic(
+            json_str, data_len, &compressed_len, plugin->config.compress);
+        if (compressed_data == NULL) {
+            plog_error(plugin, "compress data fail");
+            free(json_str);
+            return NEU_ERR_EINTERNAL;
+        }
+        data_to_send = compressed_data;
+        data_len     = compressed_len;
+        free(json_str);
+    }
+
+    char          *topic = plugin->upload_topic;
     neu_mqtt_qos_e qos   = plugin->config.qos;
-    rv       = publish(plugin, qos, topic, json_str, strlen(json_str));
-    json_str = NULL;
+    rv                   = publish(plugin, qos, topic, data_to_send, data_len);
+    data_to_send         = NULL;
 
     return rv;
 }

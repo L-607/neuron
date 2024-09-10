@@ -47,13 +47,13 @@ int handle_read_response(neu_plugin_t *plugin, neu_json_mqtt_t *mqtt_json,
 
 char *generate_upload_json(neu_plugin_t *plugin, neu_reqresp_trans_data_t *data,
                            mqtt_upload_format_e format);
-int   handle_trans_data(neu_plugin_t *            plugin,
+int   handle_trans_data(neu_plugin_t             *plugin,
                         neu_reqresp_trans_data_t *trans_data);
 
 int handle_subscribe_group(neu_plugin_t *plugin, neu_req_subscribe_t *sub_info);
-int handle_update_subscribe(neu_plugin_t *       plugin,
+int handle_update_subscribe(neu_plugin_t        *plugin,
                             neu_req_subscribe_t *sub_info);
-int handle_unsubscribe_group(neu_plugin_t *         plugin,
+int handle_unsubscribe_group(neu_plugin_t          *plugin,
                              neu_req_unsubscribe_t *unsub_info);
 
 int handle_update_group(neu_plugin_t *plugin, neu_req_update_group_t *req);
@@ -61,6 +61,10 @@ int handle_del_group(neu_plugin_t *plugin, neu_req_del_group_t *cmd);
 
 int handle_update_driver(neu_plugin_t *plugin, neu_req_update_node_t *req);
 int handle_del_driver(neu_plugin_t *plugin, neu_reqresp_node_deleted_t *req);
+
+char *compress_data_generic(const char *data, size_t data_len,
+                            size_t                *compressed_len,
+                            mqtt_upload_compress_e compress_type);
 
 #ifdef __cplusplus
 }

@@ -69,6 +69,55 @@
       ]
     }
   },
+  "compress": {
+    "name": "Upload Compress",
+    "name_zh": "上报数据压缩",
+    "description": "Compress the data before uploading",
+    "description_zh": "上传数据前是否压缩",
+    "attribute": "required",
+    "type": "map",
+    "default": 0,
+    "valid": {
+      "map": [
+        {
+          "key": "none",
+          "value": 0
+        },
+        {
+          "key": "gzip",
+          "value": 1
+        },
+        {
+          "key": "zlib",
+          "value": 2
+        },
+        {
+          "key": "lz4",
+          "value": 3
+        },
+        {
+          "key": "zstd",
+          "value": 4
+        },
+        {
+          "key": "snappy",
+          "value": 5
+        },
+        {
+          "key": "bzip2",
+          "value": 6
+        },
+        {
+          "key": "lzma",
+          "value": 7
+        },
+        {
+          "key": "brotli",
+          "value": 8
+        }
+      ]
+    }
+  },
   "write-req-topic": {
     "name": "Write Request Topic",
     "name_zh": "写请求主题",

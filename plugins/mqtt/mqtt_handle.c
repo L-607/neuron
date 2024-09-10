@@ -17,15 +17,269 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  **/
 
+#include "brotli/encode.h"
+#include "bzlib.h"
 #include "connection/mqtt_client.h"
 #include "errcodes.h"
+#include "lz4.h"
+#include "lzma.h"
+#include "snappy-c.h"
+#include "stdlib.h"
+#include "string.h"
 #include "utils/asprintf.h"
 #include "version.h"
+#include "zlib.h"
+#include "zstd.h"
 #include "json/neu_json_mqtt.h"
 #include "json/neu_json_rw.h"
 
 #include "mqtt_handle.h"
 #include "mqtt_plugin.h"
+
+char *compress_data_gzip(const char *data, size_t data_len,
+                         size_t *compressed_len)
+{
+    z_stream z = { 0 };
+    z.zalloc   = Z_NULL;
+    z.zfree    = Z_NULL;
+    z.opaque   = Z_NULL;
+
+    int ret = deflateInit2(&z, Z_BEST_COMPRESSION, Z_DEFLATED, MAX_WBITS | 16,
+                           8, Z_DEFAULT_STRATEGY);
+    if (ret != Z_OK) {
+        return NULL;
+    }
+
+    uLongf dest_len        = compressBound(data_len);
+    char  *compressed_data = (char *) malloc(dest_len);
+
+    if (compressed_data == NULL) {
+        deflateEnd(&z);
+        return NULL;
+    }
+
+    z.next_in   = (Bytef *) data;
+    z.avail_in  = data_len;
+    z.next_out  = (Bytef *) compressed_data;
+    z.avail_out = dest_len;
+
+    ret = deflate(&z, Z_FINISH);
+    if (ret != Z_STREAM_END) {
+        deflateEnd(&z);
+        free(compressed_data);
+        return NULL;
+    }
+
+    *compressed_len = z.total_out;
+
+    ret = deflateEnd(&z);
+    if (ret != Z_OK) {
+        free(compressed_data);
+        return NULL;
+    }
+
+    return compressed_data;
+}
+
+char *compress_data_zlib(const char *data, size_t data_len,
+                         size_t *compressed_len)
+{
+    z_stream z = { 0 };
+    z.zalloc   = Z_NULL;
+    z.zfree    = Z_NULL;
+    z.opaque   = Z_NULL;
+
+    int ret = deflateInit(&z, Z_BEST_COMPRESSION);
+    if (ret != Z_OK) {
+        return NULL;
+    }
+
+    uLongf dest_len        = compressBound(data_len);
+    char  *compressed_data = (char *) malloc(dest_len);
+
+    if (compressed_data == NULL) {
+        deflateEnd(&z);
+        return NULL;
+    }
+
+    z.next_in   = (Bytef *) data;
+    z.avail_in  = data_len;
+    z.next_out  = (Bytef *) compressed_data;
+    z.avail_out = dest_len;
+
+    ret = deflate(&z, Z_FINISH);
+    if (ret != Z_STREAM_END) {
+        deflateEnd(&z);
+        free(compressed_data);
+        return NULL;
+    }
+
+    *compressed_len = z.total_out;
+
+    ret = deflateEnd(&z);
+    if (ret != Z_OK) {
+        free(compressed_data);
+        return NULL;
+    }
+
+    return compressed_data;
+}
+
+char *compress_data_lz4(const char *data, size_t data_len,
+                        size_t *compressed_len)
+{
+    int   max_dst_size    = LZ4_compressBound(data_len);
+    char *compressed_data = (char *) malloc(max_dst_size + sizeof(int));
+    if (compressed_data == NULL) {
+        return NULL;
+    }
+
+    *(int *) compressed_data = data_len;
+
+    int compressed_size = LZ4_compress_default(
+        data, compressed_data + sizeof(int), data_len, max_dst_size);
+    if (compressed_size <= 0) {
+        free(compressed_data);
+        return NULL;
+    }
+
+    *compressed_len = compressed_size + sizeof(int);
+    return compressed_data;
+}
+
+char *compress_data_zstd(const char *data, size_t data_len,
+                         size_t *compressed_len)
+{
+    size_t max_dst_size    = ZSTD_compressBound(data_len);
+    char  *compressed_data = (char *) malloc(max_dst_size);
+    if (compressed_data == NULL) {
+        return NULL;
+    }
+
+    size_t compressed_size = ZSTD_compress(compressed_data, max_dst_size, data,
+                                           data_len, ZSTD_maxCLevel());
+    if (ZSTD_isError(compressed_size)) {
+        free(compressed_data);
+        return NULL;
+    }
+
+    *compressed_len = compressed_size;
+    return compressed_data;
+}
+
+char *compress_data_snappy(const char *data, size_t data_len,
+                           size_t *compressed_len)
+{
+    size_t max_compressed_len = snappy_max_compressed_length(data_len);
+    char  *compressed_data    = malloc(max_compressed_len);
+    if (compressed_data == NULL) {
+        return NULL;
+    }
+    snappy_status status =
+        snappy_compress(data, data_len, compressed_data, &max_compressed_len);
+    if (status != SNAPPY_OK) {
+        free(compressed_data);
+        return NULL;
+    }
+    *compressed_len = max_compressed_len;
+    return compressed_data;
+}
+
+char *compress_data_bzip2(const char *data, size_t data_len,
+                          size_t *compressed_len)
+{
+    unsigned int dest_len =
+        data_len * 1.01 + 600; // BZip2 recommended buffer size
+    char *compressed_data = malloc(dest_len);
+    if (compressed_data == NULL) {
+        return NULL;
+    }
+    int result = BZ2_bzBuffToBuffCompress(compressed_data, &dest_len,
+                                          (char *) data, data_len, 9, 0, 30);
+    if (result != BZ_OK) {
+        free(compressed_data);
+        return NULL;
+    }
+    *compressed_len = dest_len;
+    return compressed_data;
+}
+
+char *compress_data_lzma(const char *data, size_t data_len,
+                         size_t *compressed_len)
+{
+    size_t max_compressed_len =
+        data_len + data_len / 3 + 128; // LZMA recommended buffer size
+    char *compressed_data = malloc(max_compressed_len);
+    if (compressed_data == NULL) {
+        return NULL;
+    }
+    lzma_stream strm = LZMA_STREAM_INIT;
+    lzma_ret    ret =
+        lzma_easy_encoder(&strm, LZMA_PRESET_DEFAULT, LZMA_CHECK_CRC64);
+    if (ret != LZMA_OK) {
+        free(compressed_data);
+        return NULL;
+    }
+    strm.next_in   = (const uint8_t *) data;
+    strm.avail_in  = data_len;
+    strm.next_out  = (uint8_t *) compressed_data;
+    strm.avail_out = max_compressed_len;
+    ret            = lzma_code(&strm, LZMA_FINISH);
+    if (ret != LZMA_STREAM_END) {
+        lzma_end(&strm);
+        free(compressed_data);
+        return NULL;
+    }
+    *compressed_len = max_compressed_len - strm.avail_out;
+    lzma_end(&strm);
+    return compressed_data;
+}
+
+char *compress_data_brotli(const char *data, size_t data_len,
+                           size_t *compressed_len)
+{
+    size_t max_compressed_len = BrotliEncoderMaxCompressedSize(data_len);
+    char  *compressed_data    = malloc(max_compressed_len);
+    if (compressed_data == NULL) {
+        return NULL;
+    }
+    if (!BrotliEncoderCompress(BROTLI_DEFAULT_QUALITY, BROTLI_DEFAULT_WINDOW,
+                               BROTLI_MODE_GENERIC, data_len,
+                               (const uint8_t *) data, compressed_len,
+                               (uint8_t *) compressed_data)) {
+        free(compressed_data);
+        return NULL;
+    }
+    return compressed_data;
+}
+
+char *compress_data_generic(const char *data, size_t data_len,
+                            size_t                *compressed_len,
+                            mqtt_upload_compress_e compress_type)
+{
+    switch (compress_type) {
+    case MQTT_COMPRESS_GZIP:
+        return compress_data_gzip(data, data_len, compressed_len);
+    case MQTT_COMPRESS_ZLIB:
+        return compress_data_zlib(data, data_len, compressed_len);
+    case MQTT_COMPRESS_LZ4:
+        return compress_data_lz4(data, data_len, compressed_len);
+    case MQTT_COMPRESS_ZSTD:
+        return compress_data_zstd(data, data_len, compressed_len);
+    case MQTT_COMPRESS_SNAPPY:
+        return compress_data_snappy(data, data_len, compressed_len);
+    case MQTT_COMPRESS_BZIP2:
+        return compress_data_bzip2(data, data_len, compressed_len);
+    case MQTT_COMPRESS_LZMA:
+        return compress_data_lzma(data, data_len, compressed_len);
+    case MQTT_COMPRESS_BROTLI:
+        return compress_data_brotli(data, data_len, compressed_len);
+    case MQTT_COMPRESS_NONE:
+    default:
+        *compressed_len = data_len;
+        return strdup(data);
+    }
+}
 
 static int tag_values_to_json(UT_array *tags, neu_json_read_resp_t *json)
 {
@@ -54,10 +308,10 @@ static int tag_values_to_json(UT_array *tags, neu_json_read_resp_t *json)
 char *generate_upload_json(neu_plugin_t *plugin, neu_reqresp_trans_data_t *data,
                            mqtt_upload_format_e format)
 {
-    char *                   json_str = NULL;
+    char                    *json_str = NULL;
     neu_json_read_periodic_t header   = { .group     = (char *) data->group,
-                                        .node      = (char *) data->driver,
-                                        .timestamp = global_timestamp };
+                                          .node      = (char *) data->driver,
+                                          .timestamp = global_timestamp };
     neu_json_read_resp_t     json     = { 0 };
 
     if (0 != tag_values_to_json(data->tags, &json)) {
@@ -89,13 +343,13 @@ char *generate_upload_json(neu_plugin_t *plugin, neu_reqresp_trans_data_t *data,
     return json_str;
 }
 
-static char *generate_read_resp_json(neu_plugin_t *         plugin,
-                                     neu_json_mqtt_t *      mqtt,
+static char *generate_read_resp_json(neu_plugin_t          *plugin,
+                                     neu_json_mqtt_t       *mqtt,
                                      neu_resp_read_group_t *data)
 {
     // neu_resp_tag_value_meta_t *tags     = data->tags;
     // uint16_t                   len      = data->n_tag;
-    char *               json_str = NULL;
+    char                *json_str = NULL;
     neu_json_read_resp_t json     = { 0 };
 
     if (0 != tag_values_to_json(data->tags, &json)) {
@@ -112,14 +366,14 @@ static char *generate_read_resp_json(neu_plugin_t *         plugin,
     return json_str;
 }
 
-static char *generate_write_resp_json(neu_plugin_t *    plugin,
-                                      neu_json_mqtt_t * mqtt,
+static char *generate_write_resp_json(neu_plugin_t     *plugin,
+                                      neu_json_mqtt_t  *mqtt,
                                       neu_resp_error_t *data)
 {
     (void) plugin;
 
     neu_json_error_resp_t error    = { .error = data->error };
-    char *                json_str = NULL;
+    char                 *json_str = NULL;
 
     neu_json_encode_with_mqtt(&error, neu_json_encode_error_resp, mqtt,
                               neu_json_encode_mqtt_resp, &json_str);
@@ -329,7 +583,7 @@ void handle_write_req(neu_mqtt_qos_e qos, const char *topic,
                       trace_w3c_t *trace_w3c)
 {
     int               rv     = 0;
-    neu_plugin_t *    plugin = data;
+    neu_plugin_t     *plugin = data;
     neu_json_write_t *req    = NULL;
 
     (void) qos;
@@ -412,7 +666,7 @@ int handle_write_response(neu_plugin_t *plugin, neu_json_mqtt_t *mqtt_json,
         goto end;
     }
 
-    char *         topic = plugin->config.write_resp_topic;
+    char          *topic = plugin->config.write_resp_topic;
     neu_mqtt_qos_e qos   = plugin->config.qos;
     rv       = publish(plugin, qos, topic, json_str, strlen(json_str));
     json_str = NULL;
@@ -427,7 +681,7 @@ void handle_read_req(neu_mqtt_qos_e qos, const char *topic,
                      trace_w3c_t *trace_w3c)
 {
     int                  rv     = 0;
-    neu_plugin_t *       plugin = data;
+    neu_plugin_t        *plugin = data;
     neu_json_read_req_t *req    = NULL;
 
     (void) qos;
@@ -505,7 +759,7 @@ int handle_read_response(neu_plugin_t *plugin, neu_json_mqtt_t *mqtt_json,
         goto end;
     }
 
-    char *         topic = plugin->read_resp_topic;
+    char          *topic = plugin->read_resp_topic;
     neu_mqtt_qos_e qos   = plugin->config.qos;
     rv       = publish(plugin, qos, topic, json_str, strlen(json_str));
     json_str = NULL;
@@ -515,7 +769,7 @@ end:
     return rv;
 }
 
-int handle_trans_data(neu_plugin_t *            plugin,
+int handle_trans_data(neu_plugin_t             *plugin,
                       neu_reqresp_trans_data_t *trans_data)
 {
     int rv = 0;
@@ -544,11 +798,26 @@ int handle_trans_data(neu_plugin_t *            plugin,
         plog_error(plugin, "generate upload json fail");
         return NEU_ERR_EINTERNAL;
     }
+    char  *data_to_send = json_str;
+    size_t data_len     = strlen(json_str);
 
-    char *         topic = route->topic;
+    if (plugin->config.compress != MQTT_COMPRESS_NONE) {
+        size_t compressed_len;
+        char  *compressed_data = compress_data_generic(
+            json_str, data_len, &compressed_len, plugin->config.compress);
+        if (compressed_data == NULL) {
+            plog_error(plugin, "compress data fail");
+            free(json_str);
+            return NEU_ERR_EINTERNAL;
+        }
+        data_to_send = compressed_data;
+        data_len     = compressed_len;
+        free(json_str);
+    }
+    char          *topic = route->topic;
     neu_mqtt_qos_e qos   = plugin->config.qos;
-    rv       = publish(plugin, qos, topic, json_str, strlen(json_str));
-    json_str = NULL;
+    rv                   = publish(plugin, qos, topic, data_to_send, data_len);
+    data_to_send         = NULL;
 
     return rv;
 }
@@ -628,7 +897,7 @@ end:
     return rv;
 }
 
-int handle_unsubscribe_group(neu_plugin_t *         plugin,
+int handle_unsubscribe_group(neu_plugin_t          *plugin,
                              neu_req_unsubscribe_t *unsub_info)
 {
     route_tbl_del(&plugin->route_tbl, unsub_info->driver, unsub_info->group);

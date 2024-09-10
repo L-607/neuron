@@ -2,7 +2,7 @@
 
 ```shell
 # Ubuntu
-$ apt-get install libssl-dev openssl
+$ apt-get install libssl-dev openssl liblz4-dev libzstd-dev zlib1g-dev libbz2-dev liblzma-dev libbrotli-dev
 ```
 
 [zlog](https://github.com/HardySimpson/zlog.git)
@@ -71,5 +71,16 @@ $ git clone -b v1.4.0 https://github.com/protobuf-c/protobuf-c.git
 $ cd protobuf-c
 $ ./autogen.sh
 $ ./configure  --disable-protoc --enable-shared=no CFLAGS=-fPIC CXXFLAGS=-fPIC 
+$ make && make install
+```
+
+[snappy](https://github.com/google/snappy.git)
+```shell
+$ git clone -b 1.2.1 https://github.com/google/snappy.git
+$ cd snappy
+$ git submodule update --init
+$ mkdir build
+$ cd build 
+$ cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
 $ make && make install
 ```

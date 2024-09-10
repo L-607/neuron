@@ -48,13 +48,62 @@ if(NOT DISABLE_ASAN)
   set(CMAKE_CXX_FLAGS_DEBUG "-Wall -g -fsanitize=address")
 endif()
 
-
 add_custom_target(neuron-version
   COMMAND ${CMAKE_COMMAND} -P
           ${CMAKE_CURRENT_SOURCE_DIR}/cmake/neuron-version.cmake)
 
 find_package(nng CONFIG REQUIRED)
 find_package(Threads)
+find_package(ZLIB REQUIRED)
+find_package(BZip2 REQUIRED)
+find_package(LibLZMA REQUIRED)
+
+# For LZ4
+find_path(LZ4_INCLUDE_DIR lz4.h)
+find_library(LZ4_LIBRARY NAMES lz4)
+if(NOT LZ4_INCLUDE_DIR OR NOT LZ4_LIBRARY)
+    message(FATAL_ERROR "LZ4 library not found")
+endif()
+add_library(LZ4::LZ4 UNKNOWN IMPORTED)
+set_target_properties(LZ4::LZ4 PROPERTIES
+    IMPORTED_LOCATION "${LZ4_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${LZ4_INCLUDE_DIR}")
+
+# For zstd
+find_path(ZSTD_INCLUDE_DIR zstd.h)
+find_library(ZSTD_LIBRARY NAMES zstd)
+if(NOT ZSTD_INCLUDE_DIR OR NOT ZSTD_LIBRARY)
+    message(FATAL_ERROR "zstd library not found")
+endif()
+add_library(zstd::zstd UNKNOWN IMPORTED)
+set_target_properties(zstd::zstd PROPERTIES
+    IMPORTED_LOCATION "${ZSTD_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${ZSTD_INCLUDE_DIR}")
+
+# For Snappy
+find_path(SNAPPY_INCLUDE_DIR snappy-c.h)
+find_library(SNAPPY_LIBRARY NAMES snappy)
+
+if(NOT SNAPPY_INCLUDE_DIR OR NOT SNAPPY_LIBRARY)
+    message(FATAL_ERROR "Snappy library not found")
+endif()
+
+add_library(Snappy::snappy UNKNOWN IMPORTED)
+set_target_properties(Snappy::snappy PROPERTIES
+    IMPORTED_LOCATION "${SNAPPY_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${SNAPPY_INCLUDE_DIR}")
+
+
+# For Brotli
+find_path(BROTLI_INCLUDE_DIR brotli/encode.h)
+find_library(BROTLI_LIBRARY brotlienc)
+if(NOT BROTLI_INCLUDE_DIR OR NOT BROTLI_LIBRARY)
+    message(FATAL_ERROR "Brotli library not found")
+endif()
+add_library(Brotli::Brotli UNKNOWN IMPORTED)
+set_target_properties(Brotli::Brotli PROPERTIES
+    IMPORTED_LOCATION "${BROTLI_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${BROTLI_INCLUDE_DIR}")
 
 if (CMAKE_STAGING_PREFIX)
   include_directories(${CMAKE_STAGING_PREFIX}/include)
@@ -107,7 +156,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
     message(STATUS "build release")
     add_definitions(-DNEU_RELEASE)
 endif()
-
 
 add_library(neuron-base SHARED)
 target_sources(neuron-base PRIVATE ${NEURON_BASE_SOURCES} ${NEURON_SRC_PARSE} ${NEURON_SRC_OTEL}) 

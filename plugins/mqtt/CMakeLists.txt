@@ -13,13 +13,23 @@ add_library(${PROJECT_NAME} SHARED
   mqtt_plugin_intf.c
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE 
+target_include_directories(${PROJECT_NAME} PRIVATE
   ${CMAKE_SOURCE_DIR}/include/neuron
   ${CMAKE_SOURCE_DIR}/plugins/mqtt
 )
 
-target_link_libraries(${PROJECT_NAME} neuron-base)
-target_link_libraries(${PROJECT_NAME} ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(${PROJECT_NAME} PRIVATE 
+  neuron-base 
+  ${CMAKE_THREAD_LIBS_INIT} 
+  ZLIB::ZLIB
+  LZ4::LZ4
+  zstd::zstd
+  Snappy::snappy
+  BZip2::BZip2
+  LibLZMA::LibLZMA
+  Brotli::Brotli
+  stdc++ 
+)
 
 file(COPY ${CMAKE_SOURCE_DIR}/plugins/mqtt/aws-iot.json DESTINATION ${CMAKE_BINARY_DIR}/plugins/schema/)
 
@@ -32,13 +42,23 @@ add_library(${AWS_PLUGIN} SHARED
   aws_iot_plugin.c
 )
 
-target_include_directories(${AWS_PLUGIN} PRIVATE 
+target_include_directories(${AWS_PLUGIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/include/neuron
   ${CMAKE_SOURCE_DIR}/plugins/mqtt
 )
 
-target_link_libraries(${AWS_PLUGIN} neuron-base)
-target_link_libraries(${AWS_PLUGIN} ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(${AWS_PLUGIN} PRIVATE 
+  neuron-base 
+  ${CMAKE_THREAD_LIBS_INIT} 
+  ZLIB::ZLIB
+  LZ4::LZ4
+  zstd::zstd
+  Snappy::snappy
+  BZip2::BZip2
+  LibLZMA::LibLZMA
+  Brotli::Brotli
+  stdc++ 
+)
 
 file(COPY ${CMAKE_SOURCE_DIR}/plugins/mqtt/azure-iot.json DESTINATION ${CMAKE_BINARY_DIR}/plugins/schema/)
 
@@ -56,5 +76,15 @@ target_include_directories(${AZURE_PLUGIN} PRIVATE
   ${CMAKE_SOURCE_DIR}/plugins/mqtt
 )
 
-target_link_libraries(${AZURE_PLUGIN} neuron-base)
-target_link_libraries(${AZURE_PLUGIN} ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(${AZURE_PLUGIN} PRIVATE 
+  neuron-base 
+  ${CMAKE_THREAD_LIBS_INIT} 
+  ZLIB::ZLIB
+  LZ4::LZ4
+  zstd::zstd
+  Snappy::snappy
+  BZip2::BZip2
+  LibLZMA::LibLZMA
+  Brotli::Brotli
+  stdc++ 
+)

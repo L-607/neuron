@@ -215,7 +215,7 @@ int mqtt_config_parse(neu_plugin_t *plugin, const char *setting,
                       mqtt_config_t *config)
 {
     int         ret         = 0;
-    char *      err_param   = NULL;
+    char       *err_param   = NULL;
     const char *placeholder = "********";
 
     neu_json_elem_t version = {
@@ -226,12 +226,13 @@ int mqtt_config_parse(neu_plugin_t *plugin, const char *setting,
     };
     neu_json_elem_t client_id = { .name = "client-id", .t = NEU_JSON_STR };
     neu_json_elem_t qos       = {
-        .name      = "qos",
-        .t         = NEU_JSON_INT,
-        .v.val_int = NEU_MQTT_QOS0,               // default to QoS0
-        .attribute = NEU_JSON_ATTRIBUTE_OPTIONAL, // for backward compatibility
+              .name      = "qos",
+              .t         = NEU_JSON_INT,
+              .v.val_int = NEU_MQTT_QOS0,               // default to QoS0
+              .attribute = NEU_JSON_ATTRIBUTE_OPTIONAL, // for backward compatibility
     };
     neu_json_elem_t format          = { .name = "format", .t = NEU_JSON_INT };
+    neu_json_elem_t compress        = { .name = "compress", .t = NEU_JSON_INT };
     neu_json_elem_t write_req_topic = {
         .name      = "write-req-topic",
         .t         = NEU_JSON_STR,
@@ -245,11 +246,11 @@ int mqtt_config_parse(neu_plugin_t *plugin, const char *setting,
         .attribute = NEU_JSON_ATTRIBUTE_OPTIONAL, // for backward compatibility
     };
     neu_json_elem_t offline_cache       = { .name = "offline-cache",
-                                      .t    = NEU_JSON_BOOL };
+                                            .t    = NEU_JSON_BOOL };
     neu_json_elem_t cache_mem_size      = { .name = "cache-mem-size",
-                                       .t    = NEU_JSON_INT };
+                                            .t    = NEU_JSON_INT };
     neu_json_elem_t cache_disk_size     = { .name = "cache-disk-size",
-                                        .t    = NEU_JSON_INT };
+                                            .t    = NEU_JSON_INT };
     neu_json_elem_t cache_sync_interval = { .name = "cache-sync-interval",
                                             .t    = NEU_JSON_INT };
     neu_json_elem_t host                = { .name = "host", .t = NEU_JSON_STR };
@@ -267,8 +268,9 @@ int mqtt_config_parse(neu_plugin_t *plugin, const char *setting,
         return -1;
     }
 
-    ret = neu_parse_param(setting, &err_param, 7, &client_id, &qos, &format,
-                          &write_req_topic, &write_resp_topic, &host, &port);
+    ret = neu_parse_param(setting, &err_param, 8, &client_id, &qos, &format,
+                          &compress, &write_req_topic, &write_resp_topic, &host,
+                          &port);
     if (0 != ret) {
         plog_error(plugin, "parsing setting fail, key: `%s`", err_param);
         goto error;
@@ -302,6 +304,20 @@ int mqtt_config_parse(neu_plugin_t *plugin, const char *setting,
         goto error;
     }
 
+    // compress, required
+    if (MQTT_COMPRESS_NONE != compress.v.val_int &&
+        MQTT_COMPRESS_GZIP != compress.v.val_int &&
+        MQTT_COMPRESS_ZLIB != compress.v.val_int &&
+        MQTT_COMPRESS_LZ4 != compress.v.val_int &&
+        MQTT_COMPRESS_ZSTD != compress.v.val_int &&
+        MQTT_COMPRESS_SNAPPY != compress.v.val_int &&
+        MQTT_COMPRESS_BZIP2 != compress.v.val_int &&
+        MQTT_COMPRESS_LZMA != compress.v.val_int &&
+        MQTT_COMPRESS_BROTLI != compress.v.val_int) {
+        plog_error(plugin, "setting invalid compress: %" PRIi64,
+                   compress.v.val_int);
+        goto error;
+    }
     // write request topic
     if (NULL == write_req_topic.v.val_str &&
         0 > neu_asprintf(&write_req_topic.v.val_str, "/neuron/%s/write/req",
@@ -358,6 +374,7 @@ int mqtt_config_parse(neu_plugin_t *plugin, const char *setting,
     config->client_id           = client_id.v.val_str;
     config->qos                 = qos.v.val_int;
     config->format              = format.v.val_int;
+    config->compress            = compress.v.val_int;
     config->write_req_topic     = write_req_topic.v.val_str;
     config->write_resp_topic    = write_resp_topic.v.val_str;
     config->cache               = offline_cache.v.val_bool;
@@ -379,6 +396,8 @@ int mqtt_config_parse(neu_plugin_t *plugin, const char *setting,
     plog_notice(plugin, "config qos             : %d", config->qos);
     plog_notice(plugin, "config format          : %s",
                 mqtt_upload_format_str(config->format));
+    plog_notice(plugin, "config compress        : %s",
+                mqtt_compress_str(config->compress));
     plog_notice(plugin, "config write-req-topic : %s", config->write_req_topic);
     plog_notice(plugin, "config write-resp-topic: %s",
                 config->write_resp_topic);
