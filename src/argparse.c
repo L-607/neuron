@@ -28,6 +28,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+/* zlog: installed to /usr/local on Cygwin, system library on Linux. */
 #include <zlog.h>
 
 #include "argparse.h"

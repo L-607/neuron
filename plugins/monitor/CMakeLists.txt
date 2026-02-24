@@ -16,5 +16,8 @@ target_include_directories(plugin-monitor PRIVATE
   ${CMAKE_SOURCE_DIR}/src
 )
 
-target_link_libraries(plugin-monitor neuron-base nng)
+target_link_libraries(plugin-monitor neuron-base)
+if(NOT CYGWIN)
+  target_link_libraries(plugin-monitor nng)
+endif()
 target_link_libraries(plugin-monitor ${CMAKE_THREAD_LIBS_INIT})

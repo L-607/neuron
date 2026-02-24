@@ -37,6 +37,13 @@
 #include "version.h"
 
 static bool      exit_flag         = false;
+static bool      sig_trigger       = false;
+
+/* On Cygwin, PE DLLs cannot import data symbols from the parent executable.
+ * All globals referenced by plugin DLLs are defined in src/globals.c and
+ * live inside neuron-base.dll.  On Linux they are defined here and exported
+ * via the --dynamic-list-data linker flag. */
+#ifndef __CYGWIN__
 neu_manager_t *  g_manager         = NULL;
 zlog_category_t *neuron            = NULL;
 bool             disable_jwt       = false;
@@ -44,9 +51,8 @@ bool             sub_filter_err    = false;
 int              default_log_level = ZLOG_LEVEL_NOTICE;
 char             host_port[32]     = { 0 };
 char             g_status[32]      = { 0 };
-static bool      sig_trigger       = false;
-
-int64_t global_timestamp = 0;
+int64_t          global_timestamp  = 0;
+#endif /* !__CYGWIN__ */
 
 struct {
     struct sockaddr_in addr;

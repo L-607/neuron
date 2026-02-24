@@ -17,24 +17,116 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  **/
 
+#ifdef NEU_PLATFORM_WINDOWS
+#ifndef __CYGWIN__
+#include <winsock2.h>
+#include <windows.h>
+#include <ws2tcpip.h>
+#include <io.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
 #include <arpa/inet.h>
+#include <sys/time.h>
+#include <termios.h>
+#endif
+#else
+#include <arpa/inet.h>
+#include <sys/time.h>
+#include <termios.h>
+#endif
+
 #include <assert.h>
+#include <ctype.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
 
 #include <fcntl.h>
-#include <termios.h>
-
 #include "utils/log.h"
-
 #include "connection/neu_connection.h"
 
 #ifndef CMSPAR
 #define CMSPAR 010000000000 /* mark or space (stick) parity */
+#endif
+
+#if defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__)
+static DWORD tty_baud_to_windows(int baud)
+{
+    switch (baud) {
+    case NEU_CONN_TTY_BAUD_115200:
+        return CBR_115200;
+    case NEU_CONN_TTY_BAUD_57600:
+        return CBR_57600;
+    case NEU_CONN_TTY_BAUD_38400:
+        return CBR_38400;
+    case NEU_CONN_TTY_BAUD_19200:
+        return CBR_19200;
+    case NEU_CONN_TTY_BAUD_9600:
+        return CBR_9600;
+    case NEU_CONN_TTY_BAUD_4800:
+        return CBR_4800;
+    case NEU_CONN_TTY_BAUD_2400:
+        return CBR_2400;
+    case NEU_CONN_TTY_BAUD_1200:
+        return CBR_1200;
+    case NEU_CONN_TTY_BAUD_600:
+        return CBR_600;
+    case NEU_CONN_TTY_BAUD_300:
+        return CBR_300;
+    case NEU_CONN_TTY_BAUD_200:
+        return CBR_110;
+    case NEU_CONN_TTY_BAUD_150:
+        return CBR_110;
+    case NEU_CONN_TTY_BAUD_1800:
+        return 1800;
+    default:
+        return CBR_9600;
+    }
+}
+
+static bool tty_is_com_name(const char *dev)
+{
+    if (dev == NULL) {
+        return false;
+    }
+
+    if ((dev[0] != 'C' && dev[0] != 'c') ||
+        (dev[1] != 'O' && dev[1] != 'o') ||
+        (dev[2] != 'M' && dev[2] != 'm')) {
+        return false;
+    }
+
+    if (!isdigit((unsigned char) dev[3])) {
+        return false;
+    }
+
+    for (int i = 4; dev[i] != '\0'; i++) {
+        if (!isdigit((unsigned char) dev[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static const char *tty_win_err_hint(DWORD err)
+{
+    switch (err) {
+    case ERROR_ACCESS_DENIED:
+        return "access denied (permission issue or port already opened by another process)";
+    case ERROR_SHARING_VIOLATION:
+        return "port is in use by another process";
+    case ERROR_FILE_NOT_FOUND:
+    case ERROR_PATH_NOT_FOUND:
+        return "port does not exist";
+    case ERROR_INVALID_PARAMETER:
+        return "invalid serial parameters";
+    default:
+        return "see GetLastError for details";
+    }
+}
 #endif
 
 struct tcp_client {
@@ -346,7 +438,11 @@ ssize_t neu_conn_send(neu_conn_t *conn, uint8_t *buf, ssize_t len)
                 }
                 break;
             case NEU_CONN_TTY_CLIENT:
+    #if defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__)
+                rc = _write(conn->fd, buf + ret, (unsigned int) (len - ret));
+    #else
                 rc = write(conn->fd, buf + ret, len - ret);
+    #endif
                 break;
             }
 
@@ -470,9 +566,18 @@ ssize_t neu_conn_recv(neu_conn_t *conn, uint8_t *buf, ssize_t len)
         ret = recv(conn->fd, buf, len, 0);
         break;
     case NEU_CONN_TTY_CLIENT:
+    #if defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__)
+        ret = _read(conn->fd, buf, (unsigned int) len);
+    #else
         ret = read(conn->fd, buf, len);
+    #endif
         while (ret > 0 && ret < len) {
+        #if defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__)
+            ssize_t rv = _read(conn->fd, buf + ret,
+                               (unsigned int) (len - ret));
+        #else
             ssize_t rv = read(conn->fd, buf + ret, len - ret);
+        #endif
             if (rv <= 0) {
                 ret = rv;
                 break;
@@ -1084,6 +1189,142 @@ static void conn_connect(neu_conn_t *conn)
         break;
     }
     case NEU_CONN_TTY_CLIENT: {
+#if defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__)
+        char        dev_path[128] = { 0 };
+        const char *dev           = conn->param.params.tty_client.device;
+
+        if (dev == NULL || dev[0] == '\0') {
+            zlog_error(conn->param.log, "tty device is empty");
+            return;
+        }
+
+        if (strncmp(dev, "\\\\.\\", 4) == 0) {
+            strncpy(dev_path, dev, sizeof(dev_path) - 1);
+        } else if (tty_is_com_name(dev)) {
+            _snprintf(dev_path, sizeof(dev_path) - 1, "\\\\.\\%s", dev);
+        } else if (isdigit((unsigned char) dev[0])) {
+            _snprintf(dev_path, sizeof(dev_path) - 1, "\\\\.\\COM%s", dev);
+        } else {
+            strncpy(dev_path, dev, sizeof(dev_path) - 1);
+        }
+
+        HANDLE h = CreateFileA(dev_path, GENERIC_READ | GENERIC_WRITE, 0,
+                               NULL, OPEN_EXISTING, 0, NULL);
+        if (h == INVALID_HANDLE_VALUE) {
+            DWORD err = GetLastError();
+            zlog_error(conn->param.log, "open %s error: %lu (%s)", dev_path,
+                       err, tty_win_err_hint(err));
+            return;
+        }
+
+        DCB dcb = { 0 };
+        dcb.DCBlength = sizeof(dcb);
+        if (!GetCommState(h, &dcb)) {
+            DWORD err = GetLastError();
+            zlog_error(conn->param.log, "GetCommState %s error: %lu (%s)",
+                       dev_path, err, tty_win_err_hint(err));
+            CloseHandle(h);
+            return;
+        }
+
+        dcb.fBinary = TRUE;
+        dcb.BaudRate = tty_baud_to_windows(conn->param.params.tty_client.baud);
+
+        switch (conn->param.params.tty_client.data) {
+        case NEU_CONN_TTY_DATA_5:
+            dcb.ByteSize = 5;
+            break;
+        case NEU_CONN_TTY_DATA_6:
+            dcb.ByteSize = 6;
+            break;
+        case NEU_CONN_TTY_DATA_7:
+            dcb.ByteSize = 7;
+            break;
+        case NEU_CONN_TTY_DATA_8:
+        default:
+            dcb.ByteSize = 8;
+            break;
+        }
+
+        switch (conn->param.params.tty_client.stop) {
+        case NEU_CONN_TTY_STOP_2:
+            dcb.StopBits = TWOSTOPBITS;
+            break;
+        case NEU_CONN_TTY_STOP_1:
+        default:
+            dcb.StopBits = ONESTOPBIT;
+            break;
+        }
+
+        dcb.fParity = FALSE;
+        switch (conn->param.params.tty_client.parity) {
+        case NEU_CONN_TTY_PARITY_NONE:
+            dcb.Parity = NOPARITY;
+            break;
+        case NEU_CONN_TTY_PARITY_ODD:
+            dcb.Parity  = ODDPARITY;
+            dcb.fParity = TRUE;
+            break;
+        case NEU_CONN_TTY_PARITY_EVEN:
+            dcb.Parity  = EVENPARITY;
+            dcb.fParity = TRUE;
+            break;
+        case NEU_CONN_TTY_PARITY_MARK:
+            dcb.Parity  = MARKPARITY;
+            dcb.fParity = TRUE;
+            break;
+        case NEU_CONN_TTY_PARITY_SPACE:
+            dcb.Parity  = SPACEPARITY;
+            dcb.fParity = TRUE;
+            break;
+        }
+
+        switch (conn->param.params.tty_client.flow) {
+        case NEU_CONN_TTYP_FLOW_ENABLE:
+            dcb.fOutxCtsFlow = TRUE;
+            dcb.fRtsControl  = RTS_CONTROL_HANDSHAKE;
+            break;
+        case NEU_CONN_TTYP_FLOW_DISABLE:
+        default:
+            dcb.fOutxCtsFlow = FALSE;
+            dcb.fRtsControl  = RTS_CONTROL_ENABLE;
+            break;
+        }
+
+        if (!SetCommState(h, &dcb)) {
+            DWORD err = GetLastError();
+            zlog_error(conn->param.log, "SetCommState %s error: %lu (%s)",
+                       dev_path, err, tty_win_err_hint(err));
+            CloseHandle(h);
+            return;
+        }
+
+        COMMTIMEOUTS to = { 0 };
+        if (conn->param.params.tty_client.timeout > 0) {
+            DWORD t = (DWORD) conn->param.params.tty_client.timeout;
+            to.ReadIntervalTimeout         = t;
+            to.ReadTotalTimeoutMultiplier  = 0;
+            to.ReadTotalTimeoutConstant    = t;
+            to.WriteTotalTimeoutMultiplier = 0;
+            to.WriteTotalTimeoutConstant   = t;
+        }
+        SetCommTimeouts(h, &to);
+
+        fd = _open_osfhandle((intptr_t) h, _O_BINARY);
+        if (fd < 0) {
+            zlog_error(conn->param.log,
+                       "_open_osfhandle %s error (CRT fd convert failed)",
+                       dev_path);
+            CloseHandle(h);
+            return;
+        }
+
+        conn->fd           = fd;
+        conn->is_connected = true;
+        zlog_notice(conn->param.log, "open %s success, fd: %d", dev_path,
+                    conn->fd);
+        break;
+#else
         struct termios tty_opt = { 0 };
 #ifdef NEU_SMART_LINK
 #include "connection/neu_smart_link.h"
@@ -1245,6 +1486,7 @@ static void conn_connect(neu_conn_t *conn)
         zlog_notice(conn->param.log, "open %s success, fd: %d",
                     conn->param.params.tty_client.device, fd);
         break;
+#endif
     }
     }
 }

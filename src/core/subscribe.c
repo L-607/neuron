@@ -98,7 +98,21 @@ UT_array *neu_subscribe_manager_find_by_driver(neu_subscribe_mgr_t *mgr,
     HASH_ITER(hh, mgr->ss, el, tmp)
     {
         if (strcmp(driver, el->key.driver) == 0) {
-            utarray_concat(apps, el->apps);
+            utarray_foreach(el->apps, neu_app_subscribe_t *, sub_app)
+            {
+                bool exists = false;
+                utarray_foreach(apps, neu_app_subscribe_t *, app)
+                {
+                    if (strcmp(app->app_name, sub_app->app_name) == 0) {
+                        exists = true;
+                        break;
+                    }
+                }
+
+                if (!exists) {
+                    utarray_push_back(apps, sub_app);
+                }
+            }
         }
     }
 

@@ -33,16 +33,18 @@
 
 #include "neu_json_datalayers.h"
 
-#include <openssl/md5.h>
+#include <openssl/evp.h>
 
 void generate_fixed_uuid(const char *input, char *out)
 {
-    unsigned char hash[MD5_DIGEST_LENGTH];
-    MD5_CTX       md5_ctx;
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int  hash_len = 0;
+    EVP_MD_CTX   *ctx      = EVP_MD_CTX_new();
 
-    MD5_Init(&md5_ctx);
-    MD5_Update(&md5_ctx, input, strlen(input));
-    MD5_Final(hash, &md5_ctx);
+    EVP_DigestInit_ex(ctx, EVP_md5(), NULL);
+    EVP_DigestUpdate(ctx, input, strlen(input));
+    EVP_DigestFinal_ex(ctx, hash, &hash_len);
+    EVP_MD_CTX_free(ctx);
 
     snprintf(
         out, 37,

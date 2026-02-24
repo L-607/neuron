@@ -24,7 +24,9 @@
 #include <unistd.h>
 
 #ifndef NEU_CLIB
+#if !defined(__CYGWIN__) && !defined(_WIN32)
 #include <gnu/libc-version.h>
+#endif
 #endif
 
 #include "adapter.h"
@@ -83,6 +85,9 @@ static void find_os_info()
 #ifdef NEU_CLIB
     strncpy(g_metrics_.clib, NEU_CLIB, sizeof(g_metrics_.clib));
     strncpy(g_metrics_.clib_version, "unknow", sizeof(g_metrics_.clib_version));
+#elif defined(__CYGWIN__) || defined(_WIN32)
+    strncpy(g_metrics_.clib, "cygwin", sizeof(g_metrics_.clib));
+    strncpy(g_metrics_.clib_version, "unknown", sizeof(g_metrics_.clib_version));
 #else
     strncpy(g_metrics_.clib, "glibc", sizeof(g_metrics_.clib));
     strncpy(g_metrics_.clib_version, gnu_get_libc_version(),
@@ -127,26 +132,45 @@ static inline size_t memory_used()
 static inline size_t neuron_memory_used()
 {
     FILE * f       = NULL;
-    char   buf[32] = {};
+    char   buf[64] = {};
     size_t val     = 0;
     pid_t  pid     = getpid();
 
-    sprintf(buf, "ps -o rss= %ld", (long) pid);
-
+#ifdef __CYGWIN__
+    /* Cygwin's ps does not support -o flag; read VmRSS from /proc/PID/status */
+    snprintf(buf, sizeof(buf), "/proc/%ld/status", (long) pid);
+    f = fopen(buf, "r");
+    if (NULL == f) {
+        nlog_error("open %s fail", buf);
+        return 0;
+    }
+    char line[64];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "VmRSS:", 6) == 0) {
+            unsigned long rss_kb = 0;
+            if (sscanf(line + 6, "%lu", &rss_kb) == 1) {
+                val = (size_t) rss_kb * 1024;
+            }
+            break;
+        }
+    }
+    fclose(f);
+#else
+    snprintf(buf, sizeof(buf), "ps -o rss= %ld", (long) pid);
     f = popen(buf, "r");
     if (NULL == f) {
         nlog_error("popen command fail");
         return 0;
     }
-
     if (NULL != fgets(buf, sizeof(buf), f)) {
         val = atoll(buf);
     } else {
         nlog_error("no command output");
     }
-
     pclose(f);
-    return val * 1024;
+    val *= 1024;
+#endif
+    return val;
 }
 
 static inline size_t memory_cache()
@@ -169,17 +193,9 @@ static inline int disk_usage(size_t *size_p, size_t *used_p, size_t *avail_p)
 
 static unsigned cpu_usage()
 {
-    int                ret   = 0;
-    unsigned long long user1 = 0, nice1 = 0, sys1 = 0, idle1 = 0, iowait1 = 0,
-                       irq1 = 0, softirq1 = 0;
-    unsigned long long user2 = 0, nice2 = 0, sys2 = 0, idle2 = 0, iowait2 = 0,
-                       irq2 = 0, softirq2 = 0;
-    unsigned long long work = 0, total = 0;
-    struct timespec    tv = {
-        .tv_sec  = 0,
-        .tv_nsec = 50000000,
-    };
-    FILE *f = NULL;
+    unsigned long long work  = 0, total = 0;
+    struct timespec    tv    = { .tv_sec = 0, .tv_nsec = 50000000 };
+    FILE *             f     = NULL;
 
     f = fopen("/proc/stat", "r");
     if (NULL == f) {
@@ -187,28 +203,54 @@ static unsigned cpu_usage()
         return 0;
     }
 
-    ret = fscanf(f, "cpu %llu %llu %llu %llu %llu %llu %llu", &user1, &nice1,
-                 &sys1, &idle1, &iowait1, &irq1, &softirq1);
+#ifdef __CYGWIN__
+    /* Cygwin /proc/stat has 4 fields: user nice sys idle */
+    unsigned long long user1 = 0, nice1 = 0, sys1 = 0, idle1 = 0;
+    unsigned long long user2 = 0, nice2 = 0, sys2 = 0, idle2 = 0;
+    if (4 != fscanf(f, "cpu %llu %llu %llu %llu",
+                    &user1, &nice1, &sys1, &idle1)) {
+        fclose(f);
+        return 0;
+    }
+    nanosleep(&tv, NULL);
+    rewind(f);
+    if (4 != fscanf(f, "cpu %llu %llu %llu %llu",
+                    &user2, &nice2, &sys2, &idle2)) {
+        fclose(f);
+        return 0;
+    }
+    fclose(f);
+    work  = (user2 - user1) + (nice2 - nice1) + (sys2 - sys1);
+    total = work + (idle2 - idle1);
+#else
+    int                ret      = 0;
+    unsigned long long user1    = 0, nice1 = 0, sys1 = 0, idle1 = 0,
+                       iowait1  = 0, irq1  = 0, softirq1 = 0;
+    unsigned long long user2    = 0, nice2 = 0, sys2 = 0, idle2 = 0,
+                       iowait2  = 0, irq2  = 0, softirq2 = 0;
+    ret = fscanf(f, "cpu %llu %llu %llu %llu %llu %llu %llu",
+                 &user1, &nice1, &sys1, &idle1, &iowait1, &irq1, &softirq1);
     if (7 != ret) {
         fclose(f);
         return 0;
     }
-
     nanosleep(&tv, NULL);
-
     rewind(f);
-    ret = fscanf(f, "cpu %llu %llu %llu %llu %llu %llu %llu", &user2, &nice2,
-                 &sys2, &idle2, &iowait2, &irq2, &softirq2);
+    ret = fscanf(f, "cpu %llu %llu %llu %llu %llu %llu %llu",
+                 &user2, &nice2, &sys2, &idle2, &iowait2, &irq2, &softirq2);
     if (7 != ret) {
         fclose(f);
         return 0;
     }
     fclose(f);
-
     work  = (user2 - user1) + (nice2 - nice1) + (sys2 - sys1);
-    total = work + (idle2 - idle1) + (iowait2 - iowait1) + (irq2 - irq1) +
-        (softirq2 - softirq1);
+    total = work + (idle2 - idle1) + (iowait2 - iowait1) +
+            (irq2 - irq1) + (softirq2 - softirq1);
+#endif
 
+    if (0 == total) {
+        return 0;
+    }
     return (double) work / total * 100.0 * sysconf(_SC_NPROCESSORS_CONF);
 }
 

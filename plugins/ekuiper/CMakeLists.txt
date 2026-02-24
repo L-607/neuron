@@ -12,5 +12,8 @@ add_library(plugin-ekuiper SHARED ${src})
 target_include_directories(plugin-ekuiper PRIVATE 
   ${CMAKE_SOURCE_DIR}/include/neuron)
 
-target_link_libraries(plugin-ekuiper neuron-base nng)
+target_link_libraries(plugin-ekuiper neuron-base)
+if(NOT CYGWIN)
+  target_link_libraries(plugin-ekuiper nng)
+endif()
 target_link_libraries(plugin-ekuiper ${CMAKE_THREAD_LIBS_INIT})

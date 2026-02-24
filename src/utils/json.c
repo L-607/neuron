@@ -23,6 +23,23 @@
 
 #include <jansson.h>
 
+/* Compatibility: json_realp was added in jansson 2.14.
+ * Provide a fallback using json_real() for older versions. */
+#ifdef __CYGWIN__
+    #ifndef JANSSON_VERSION_HEX
+    #  define JANSSON_VERSION_HEX 0
+    #endif
+
+    /* 即使在 Cygwin 下，也只针对旧版本补齐 */
+    #if JANSSON_VERSION_HEX < 0x021400
+    static inline json_t *json_realp(double value, int prec)
+    {
+        (void) prec;
+        return json_real(value);
+    }
+    #endif
+#endif
+
 #include "utils/log.h"
 #include "json/json.h"
 

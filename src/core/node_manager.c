@@ -25,6 +25,10 @@
 #include "adapter/adapter_internal.h"
 #include "node_manager.h"
 
+#if defined(__CYGWIN__) || (defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__))
+#define NEU_PATH_UNIX_SOCKET 1
+#endif
+
 typedef struct node_entity {
     char *name;
 
@@ -206,7 +210,13 @@ bool neu_node_manager_exist_uninit(neu_node_manager_t *mgr)
 
     HASH_ITER(hh, mgr->nodes, el, tmp)
     {
-        if (el->addr.sun_path[1] == 0) {
+        if (
+#ifdef NEU_PATH_UNIX_SOCKET
+            el->addr.sun_path[0] == 0
+#else
+            el->addr.sun_path[1] == 0
+#endif
+        ) {
             return true;
         }
     }

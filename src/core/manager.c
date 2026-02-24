@@ -50,6 +50,10 @@
 #include "manager.h"
 #include "manager_internal.h"
 
+#if defined(__CYGWIN__) || (defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__))
+#define NEU_PATH_UNIX_SOCKET 1
+#endif
+
 // definition for adapter names
 #define DEFAULT_DASHBOARD_ADAPTER_NAME DEFAULT_DASHBOARD_PLUGIN_NAME
 
@@ -131,9 +135,17 @@ neu_manager_t *neu_manager_create()
     // use abstract domain socket here to avoid polluting the file system
     struct sockaddr_un local = {
         .sun_family = AF_UNIX,
+#ifdef NEU_PATH_UNIX_SOCKET
+        .sun_path   = "/tmp/neuron-manager",
+#else
         .sun_path   = "#neuron-manager",
+#endif
     };
+#ifdef NEU_PATH_UNIX_SOCKET
+    unlink("/tmp/neuron-manager"); // remove stale socket file if any
+#else
     local.sun_path[0] = '\0';
+#endif
     rv = bind(manager->server_fd, (struct sockaddr *) &local, sizeof(local));
     assert(rv == 0);
 
@@ -193,7 +205,11 @@ void neu_manager_destroy(neu_manager_t *manager)
         strcpy(header->sender, "manager");
         if (0 != neu_send_msg_to(manager->server_fd, addr, msg)) {
             nlog_error("manager -> %s uninit msg send fail",
+#ifdef NEU_PATH_UNIX_SOCKET
+                       addr->sun_path);
+#else
                        &addr->sun_path[1]);
+#endif
             send_msg_success = 0;
             neu_msg_free(msg);
             break;
@@ -215,6 +231,9 @@ void neu_manager_destroy(neu_manager_t *manager)
     neu_plugin_manager_destroy(manager->plugin_manager);
 
     close(manager->server_fd);
+#ifdef NEU_PATH_UNIX_SOCKET
+    unlink("/tmp/neuron-manager"); // cleanup filesystem socket
+#endif
     neu_event_del_io(manager->events, manager->loop);
     neu_event_close(manager->events);
 
@@ -251,11 +270,33 @@ static int manager_loop(enum neu_event_io_type type, int fd, void *usr_data)
     case NEU_REQ_NODE_INIT: {
         neu_req_node_init_t *init = (neu_req_node_init_t *) &header[1];
 
+#ifdef NEU_PATH_UNIX_SOCKET
+        // On Cygwin, recvfrom() does not fill in src_addr for connected
+        // AF_UNIX SOCK_DGRAM sockets. Fall back to getsockname() on the
+        // adapter's control_fd to get its bound filesystem socket path.
+        if (src_addr.sun_path[0] == '\0') {
+            neu_adapter_t *fix_adapter =
+                neu_node_manager_find(manager->node_manager, init->node);
+            if (fix_adapter != NULL) {
+                socklen_t slen = sizeof(src_addr);
+                if (0 != getsockname(fix_adapter->control_fd,
+                                     (struct sockaddr *) &src_addr, &slen)) {
+                    nlog_warn("getsockname for %s failed: %s", init->node,
+                              strerror(errno));
+                }
+            }
+        }
+#endif
+
         if (0 !=
             neu_node_manager_update(manager->node_manager, init->node,
                                     src_addr)) {
             nlog_warn("bind node %s to src addr(%s) fail", init->node,
+#ifdef NEU_PATH_UNIX_SOCKET
+                      src_addr.sun_path);
+#else
                       &src_addr.sun_path[1]);
+#endif
             neu_msg_free(msg);
             break;
         }
@@ -272,7 +313,11 @@ static int manager_loop(enum neu_event_io_type type, int fd, void *usr_data)
         }
 
         nlog_notice("bind node %s to src addr(%s)", init->node,
+    #ifdef NEU_PATH_UNIX_SOCKET
+                    src_addr.sun_path);
+#else
                     &src_addr.sun_path[1]);
+#endif
         neu_msg_free(msg);
         break;
     }
@@ -1830,7 +1875,11 @@ inline static void reply(neu_manager_t *manager, neu_reqresp_head_t *header,
     int        ret = neu_send_msg_to(manager->server_fd, &addr, msg);
     if (0 == ret) {
         nlog_notice("reply %s to %s(%s) %p", neu_reqresp_type_string(t),
+#ifdef NEU_PATH_UNIX_SOCKET
+                    receiver, addr.sun_path, ctx);
+#else
                     receiver, &addr.sun_path[1], ctx);
+#endif
     } else {
         nlog_warn("reply %s to %s, error: %d", neu_reqresp_type_string(t),
                   receiver, ret);
@@ -2007,7 +2056,11 @@ inline static void notify_monitor(neu_manager_t *    manager,
     // monitor not ready, ignore
     neu_node_manager_t *mgr  = manager->node_manager;
     struct sockaddr_un  addr = neu_node_manager_get_addr(mgr, "monitor");
-    if (0 == addr.sun_path) {
+#ifdef NEU_PATH_UNIX_SOCKET
+    if (addr.sun_path[0] == '\0') {
+#else
+    if (addr.sun_path[1] == '\0') {
+#endif
         return;
     }
 

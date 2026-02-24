@@ -35,6 +35,25 @@
 
 #include "daemon.h"
 
+#if defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__)
+void daemonize()
+{
+    // Windows does not support daemonize via fork. 
+    // Usually handled by Service Control Manager.
+    // We do nothing here for console run.
+}
+
+int check_pid(const char *pidfile) { (void)pidfile; return 0; }
+int write_pid(const char *pidfile) { (void)pidfile; return 0; }
+void remove_pid(const char *pidfile) { (void)pidfile; }
+
+#elif defined(NEU_PLATFORM_WINDOWS) && defined(__CYGWIN__)
+
+// Cygwin behaves like Linux
+// Do nothing here, fall through to default implementation in #else
+
+#else
+
 #define STOP_TIMEOUT 10000
 #define STOP_TICK 2000
 
@@ -224,3 +243,4 @@ end:
     fclose(fp);
     return ret;
 }
+#endif

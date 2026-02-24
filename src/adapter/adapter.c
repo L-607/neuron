@@ -44,6 +44,10 @@
 #include "plugin.h"
 #include "storage.h"
 
+#if defined(__CYGWIN__) || (defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__))
+#define NEU_PATH_UNIX_SOCKET 1
+#endif
+
 void adapter_msg_q_exit(adapter_msg_q_t *q);
 
 static void *adapter_consumer(void *arg);
@@ -221,22 +225,39 @@ neu_adapter_t *neu_adapter_create(neu_adapter_info_t *info, bool load)
     adapter->trans_data_port         = 0;
     adapter->log_level               = ZLOG_LEVEL_NOTICE;
 
-    // use port number to distinguish each Linux abstract domain socket
+    // use port number to distinguish each adapter socket
     uint16_t           port  = neu_manager_get_port();
     struct sockaddr_un local = {
         .sun_family = AF_UNIX,
     };
+#ifdef NEU_PATH_UNIX_SOCKET
+    {
+        char cygwin_path[108];
+        snprintf(cygwin_path, sizeof(cygwin_path), "/tmp/neuron-%" PRIu16,
+                 port);
+        unlink(cygwin_path); // remove stale socket file if any
+        strncpy(local.sun_path, cygwin_path, sizeof(local.sun_path) - 1);
+    }
+#else
     snprintf(local.sun_path, sizeof(local.sun_path), "%cneuron-%" PRIu16, '\0',
              port);
+#endif
     rv = bind(adapter->control_fd, (struct sockaddr *) &local,
               sizeof(struct sockaddr_un));
     assert(rv == 0);
 
+#ifdef NEU_PATH_UNIX_SOCKET
+    struct sockaddr_un remote = {
+        .sun_family = AF_UNIX,
+        .sun_path   = "/tmp/neuron-manager",
+    };
+#else
     struct sockaddr_un remote = {
         .sun_family = AF_UNIX,
         .sun_path   = "#neuron-manager",
     };
     remote.sun_path[0] = '\0';
+#endif
     rv = connect(adapter->control_fd, (struct sockaddr *) &remote,
                  sizeof(struct sockaddr_un));
     assert(rv == 0);
@@ -253,10 +274,21 @@ neu_adapter_t *neu_adapter_create(neu_adapter_info_t *info, bool load)
         pthread_create(&adapter->consumer_tid, NULL, adapter_consumer,
                        (void *) adapter);
         while (true) {
-            // use port number to distinguish each Linux abstract domain socket
+            // use port number to distinguish each adapter socket
             port = neu_manager_get_port();
+#ifdef NEU_PATH_UNIX_SOCKET
+            {
+                char cygwin_path[108];
+                snprintf(cygwin_path, sizeof(cygwin_path),
+                         "/tmp/neuron-%" PRIu16, port);
+                unlink(cygwin_path); // remove stale socket file if any
+                strncpy(local.sun_path, cygwin_path,
+                        sizeof(local.sun_path) - 1);
+            }
+#else
             snprintf(local.sun_path, sizeof(local.sun_path),
                      "%cneuron-%" PRIu16, '\0', port);
+#endif
             if (bind(adapter->trans_data_fd, (struct sockaddr *) &local,
                      sizeof(struct sockaddr_un)) == 0) {
                 adapter->trans_data_port = port;
@@ -2040,6 +2072,24 @@ int neu_adapter_add_gtags(neu_adapter_t *adapter, neu_req_add_gtag_t *cmd,
 void neu_adapter_destroy(neu_adapter_t *adapter)
 {
     nlog_notice("adapter %s destroy", adapter->name);
+#ifdef NEU_PATH_UNIX_SOCKET
+    // On Cygwin, filesystem sockets must be explicitly unlinked
+    {
+        struct sockaddr_un sn = { 0 };
+        socklen_t          sn_len = sizeof(sn);
+        if (getsockname(adapter->control_fd, (struct sockaddr *) &sn,
+                        &sn_len) == 0 &&
+            sn.sun_path[0] != '\0') {
+            unlink(sn.sun_path);
+        }
+        if (adapter->trans_data_port != 0) {
+            char path[108];
+            snprintf(path, sizeof(path), "/tmp/neuron-%u",
+                     (unsigned) adapter->trans_data_port);
+            unlink(path);
+        }
+    }
+#endif
     close(adapter->control_fd);
     close(adapter->trans_data_fd);
 

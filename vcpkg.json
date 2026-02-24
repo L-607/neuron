@@ -1,0 +1,13 @@
+{
+    "name": "neuron",
+    "version-string": "0.1.0",
+    "dependencies": [
+        "nng",
+        "libxml2",
+        "openssl",
+        "jansson",
+        "sqlite3",
+        "protobuf-c",
+        "pthreads"
+    ]
+}

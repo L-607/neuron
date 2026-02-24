@@ -30,6 +30,10 @@
 #include "subscribe.h"
 #include "utils/log.h"
 
+#if defined(__CYGWIN__) || (defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__))
+#define NEU_PATH_UNIX_SOCKET 1
+#endif
+
 struct neu_manager {
     int server_fd;
 
@@ -111,7 +115,13 @@ inline static void forward_msg(neu_manager_t *     manager,
         nlog_info("forward msg %s to %s", neu_reqresp_type_string(t), receiver);
     } else {
         nlog_warn("forward msg %s to node (%s)%s %s %s fail",
-                  neu_reqresp_type_string(t), receiver, &addr.sun_path[1], node,
+                  neu_reqresp_type_string(t), receiver,
+    #ifdef NEU_PATH_UNIX_SOCKET
+                  addr.sun_path,
+#else
+                  &addr.sun_path[1],
+#endif
+                  node,
                   header->sender);
         neu_msg_free(msg);
     }

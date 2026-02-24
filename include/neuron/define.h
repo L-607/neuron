@@ -136,6 +136,7 @@
 
 extern int  default_log_level;
 extern bool disable_jwt;
+extern bool sub_filter_err;
 extern char host_port[32];
 extern char g_status[32];
 

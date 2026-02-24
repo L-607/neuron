@@ -16,6 +16,73 @@
  * along with this program; if not, write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  **/
+
+/* Raw Ethernet (Layer 2) sockets are Linux-specific and not available on Cygwin.
+ * Provide stub implementations for Cygwin builds. */
+#ifdef __CYGWIN__
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include "connection/neu_connection_eth.h"
+
+neu_conn_eth_t *neu_conn_eth_init(const char *interface, void *ctx)
+{
+    (void) interface;
+    (void) ctx;
+    return NULL;
+}
+
+int neu_conn_eth_uninit(neu_conn_eth_t *conn)
+{
+    (void) conn;
+    return 0;
+}
+
+int neu_conn_eth_check_interface(const char *interface)
+{
+    (void) interface;
+    return -1;
+}
+
+void neu_conn_eth_get_mac(neu_conn_eth_t *conn, uint8_t *mac)
+{
+    (void) conn;
+    if (mac)
+        memset(mac, 0, 6);
+}
+
+int neu_conn_eth_size() { return 0; }
+
+neu_conn_eth_sub_t *neu_conn_eth_register(neu_conn_eth_t *      conn,
+                                           uint8_t               mac[6],
+                                           neu_conn_eth_msg_callback callback)
+{
+    (void) conn;
+    (void) mac;
+    (void) callback;
+    return NULL;
+}
+
+int neu_conn_eth_unregister(neu_conn_eth_t *conn, neu_conn_eth_sub_t *sub)
+{
+    (void) conn;
+    (void) sub;
+    return 0;
+}
+
+int neu_conn_eth_send(neu_conn_eth_t *conn, uint16_t protocol, uint16_t n_byte,
+                      uint8_t *bytes)
+{
+    (void) conn;
+    (void) protocol;
+    (void) n_byte;
+    (void) bytes;
+    return -1;
+}
+
+#else /* !__CYGWIN__ - Full Linux implementation below */
+
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
@@ -416,3 +483,5 @@ static int eth_msg_cb(enum neu_event_io_type type, int fd, void *usr_data)
 
     return 0;
 }
+
+#endif /* !__CYGWIN__ */

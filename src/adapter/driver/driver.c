@@ -43,6 +43,10 @@
 #include "core/node_manager.h"
 #include "otel/otel_manager.h"
 
+#if defined(__CYGWIN__) || (defined(NEU_PLATFORM_WINDOWS) && !defined(__CYGWIN__))
+#define NEU_PATH_UNIX_SOCKET 1
+#endif
+
 typedef struct to_be_write_tag {
     bool           single;
     neu_datatag_t *tag;
@@ -3329,8 +3333,13 @@ void neu_adapter_driver_subscribe(neu_adapter_driver_t *driver,
 
     strcpy(sub_app.app, req->app);
     sub_app.addr.sun_family = AF_UNIX;
+#ifdef NEU_PATH_UNIX_SOCKET
+    snprintf(sub_app.addr.sun_path, sizeof(sub_app.addr.sun_path),
+             "/tmp/neuron-%" PRIu16, req->port);
+#else
     snprintf(sub_app.addr.sun_path, sizeof(sub_app.addr.sun_path),
              "%cneuron-%" PRIu16, '\0', req->port);
+#endif
 
     utarray_push_back(find->apps, &sub_app);
     pthread_mutex_unlock(&find->apps_mtx);
